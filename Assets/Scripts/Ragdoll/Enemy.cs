@@ -3,7 +3,7 @@ using UnityEngine;
 public class Enemy : MonoBehaviour
 {
     [SerializeField] private CharacterVisualAnimator animator;
-    [SerializeField] private RagdollHandler ragdollHandler;
+    [SerializeField] private RagdollController ragdollHandler;
 
     private void Start()
     {

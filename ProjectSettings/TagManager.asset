@@ -12,7 +12,7 @@ TagManager:
   - Water
   - UI
   - ground
-  - 
+  - Ragdol
   - YuME_TileMap
   - 
   - 
@@ -36,7 +36,7 @@ TagManager:
   - 
   - 
   - 
-  - spring
+  - 
   m_SortingLayers:
   - name: Default
     uniqueID: 0

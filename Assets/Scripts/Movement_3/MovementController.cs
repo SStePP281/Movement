@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 public class MovementController : MonoBehaviour
@@ -5,6 +6,7 @@ public class MovementController : MonoBehaviour
     private const int COMBAT_COUNT_MAX = 3;
 
     [Header("GroundDetectParams")]
+    [SerializeField] private LayerMask ignoreGroundLayer;
     [SerializeField] private float groundCheckDistance = 0.1f;
     [SerializeField] private float groundCheckRadiuse = 0.5f;
 
@@ -49,14 +51,17 @@ public class MovementController : MonoBehaviour
     [SerializeField] private float uprightJointSpringStrength = 100.0f;
     [SerializeField] private float uprightJointSpringDamper = 10.0f;
 
+    [Header("Ragdol")]
+    [SerializeField] private float maxFallTime = 2.0f;
+
     /*Floor params*/
     private bool isFloorRayHit;
     private RaycastHit floorHit;
     private float floorAngle;
 
     /*Take params*/
-    private CapsuleCollider capsule;
     private Rigidbody rb;
+    private CapsuleCollider capsule;
     private Transform cameraTransform;
 
     /*Move params*/
@@ -92,6 +97,11 @@ public class MovementController : MonoBehaviour
 
     /*Update params*/
     private float deltaTime;
+    private bool isCanMove;
+
+    /*Ragdol params*/
+    private bool isFalling;
+    public Action<Vector3> OnFalling;
 
     public void Initialize(float deltaTime)
     {
@@ -100,9 +110,7 @@ public class MovementController : MonoBehaviour
         rb = GetComponent<Rigidbody>();
         capsule = GetComponent<CapsuleCollider>();
 
-        rb.maxDepenetrationVelocity = 2f;
-        rb.inertiaTensor = new Vector3(rb.inertiaTensor.x * 10.0f, rb.inertiaTensor.y, rb.inertiaTensor.z * 10.0f);
-
+        isCanMove = true;
         targetUprightRotation = transform.rotation;
         cameraTransform = Camera.main.transform;
 
@@ -117,6 +125,22 @@ public class MovementController : MonoBehaviour
         IsJumpAnimation = new ReactiveVariable<bool>(false);
     }
 
+    public void OnRagdolEnable()
+    {
+        isCanMove = false;
+        capsule.enabled = false;
+        rb.isKinematic = true;
+    }
+
+    public void OnRagdolDisable()
+    {
+        isCanMove = true;
+        capsule.enabled = true;
+        rb.isKinematic = false;
+
+        HandleDetec();
+    }
+
     private void OnValueChanged_IsGrounded(bool priviouse, bool current)
     {
         if (current)
@@ -125,6 +149,7 @@ public class MovementController : MonoBehaviour
             IsJumpAnimation.Value = false;
             isJumpCut = false;
             rideHeightEnable = true;
+            isFalling = false;
         }
 
         if (!current)
@@ -135,6 +160,8 @@ public class MovementController : MonoBehaviour
 
     public void MovementUpdate(InputData inputData)
     {
+        if (!isCanMove) { return; }
+
         HandleRotate(inputData.movementInput);
         HandleJump(inputData.isJumpPressed);
         HandleDetec();
@@ -144,7 +171,7 @@ public class MovementController : MonoBehaviour
         HandleMove();
         HandleGravity(inputData.isJumpPressed);
     }
-    
+
     private void HandleGravity(bool isJumpPressed)
     {
         float gravityTick = initialJumpGravity[CombatJumpCount.Value];
@@ -343,13 +370,18 @@ public class MovementController : MonoBehaviour
             isSliding = floorAngle > maxSlopeAngle && !isJumping;
 
             isGrounded.Value = Physics.CheckSphere(startRayPosition - Vector3.up * groundCheckDistance, groundCheckRadiuse);
-
         }
         else
         {
             isGrounded.Value = false;
             isSliding = false;
             floorAngle = 0.0f;
+        }
+
+        if (!isGrounded.Value && !isJumping && !isFalling && Time.time - lastGroundedTime > maxFallTime)
+        {
+            isFalling = true;
+            OnFalling?.Invoke(rb.velocity);
         }
     }
 
@@ -452,7 +484,7 @@ public class MovementController : MonoBehaviour
         initialJumpVelocity[2] = (2 * (baseJumpHieght + combatJumpHeightCoef * 2)) / (timeToApex * 1.5f);
     }
 
-    /*DEBUG*/
+    ///*DEBUG*/
     //private void OnDrawGizmos()
     //{
     //    Gizmos.color = Color.red;
