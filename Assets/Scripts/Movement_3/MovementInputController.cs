@@ -2,22 +2,22 @@ using System;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-public struct InputData
+public struct MovementInputData
 {
     public Vector2 movementInput;
     public bool isJumpPressed;
 }
 
-public class InputController : IDisposable
+public class MovementInputController : IDisposable
 {
-    public InputData InputData { get => data; }
+    public MovementInputData MovementInputData { get => data; }
 
-    private InputData data;
+    private MovementInputData data;
     private PlayerInputAction inputActions;
 
-    public InputController()
+    public MovementInputController()
     {
-        data = new InputData();
+        data = new MovementInputData();
 
         inputActions = new PlayerInputAction();
         inputActions.Enable();
