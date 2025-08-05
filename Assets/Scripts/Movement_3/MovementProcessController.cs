@@ -1,7 +1,24 @@
 using System;
+using Unity.Netcode;
 using UnityEngine;
 
-public class MovementProcess : MonoBehaviour
+public struct MovementProcessData : INetworkSerializable
+{
+    public Vector3 position;
+    public Vector3 velocity;
+    public Quaternion rotation;
+    public int tick;
+
+    public void NetworkSerialize<T>(BufferSerializer<T> serializer) where T : IReaderWriter
+    {
+        serializer.SerializeValue(ref position);
+        serializer.SerializeValue(ref velocity);
+        serializer.SerializeValue(ref rotation);
+        serializer.SerializeValue(ref tick);
+    }
+}
+
+public class MovementProcessController : NetworkBehaviour
 {
     private const int COMBAT_COUNT_MAX = 3;
 
@@ -53,6 +70,11 @@ public class MovementProcess : MonoBehaviour
     [Header("Ragdol")]
     [SerializeField] private float maxFallTime = 2.0f;
 
+    [Header("Net Interpolation")]
+    [SerializeField] private float baseInterpolateSpeed = 10.0f;
+    [SerializeField] private float maxExtrapolateDistance = 2.0f;
+    [SerializeField] private float rotationSmoothTime = 0.1f;
+
     /*Floor params*/
     private bool isFloorRayHit;
     private RaycastHit floorHit;
@@ -102,73 +124,141 @@ public class MovementProcess : MonoBehaviour
     private bool isFalling;
     public Action<Vector3> OnFalling;
 
-    public void Initialize(float deltaTime)
-    {
-        this.deltaTime = deltaTime;
+    /*Netcode params*/
+    private MovementProcessData processData;
 
+    private void Awake()
+    {
         rb = GetComponent<Rigidbody>();
         capsule = GetComponent<CapsuleCollider>();
-
-        isCanMove = true;
-        targetUprightRotation = transform.rotation;
-        cameraTransform = Camera.main.transform;
-
-        initialJumpGravity = new float[COMBAT_COUNT_MAX];
-        initialJumpVelocity = new float[COMBAT_COUNT_MAX];
-        SetupJumpVariables();
 
         isGrounded = new ReactiveVariable<bool>(false);
         isGrounded.OnValueChanged += OnValueChanged_IsGrounded;
 
         CombatJumpCount = new ReactiveVariable<int>(0);
         IsJumpAnimation = new ReactiveVariable<bool>(false);
-    }
 
-    public void OnRagdolEnable()
-    {
-        isCanMove = false;
-        capsule.enabled = false;
-        rb.isKinematic = true;
-    }
+        processData = new MovementProcessData();
 
-    public void OnRagdolDisable()
-    {
         isCanMove = true;
-        capsule.enabled = true;
-        rb.isKinematic = false;
+        targetUprightRotation = transform.rotation;
+        cameraTransform = Camera.main.transform;
+        lastGroundedTime = Time.time;
+
+        initialJumpGravity = new float[COMBAT_COUNT_MAX];
+        initialJumpVelocity = new float[COMBAT_COUNT_MAX];
+        SetupJumpVariables();
+    }
+
+    public void Initialize(float deltaTime)
+    {
+        this.deltaTime = deltaTime;
+    }
+
+    public MovementProcessData MovementProcess(MovementInputData inputData)
+    {
+        if (isCanMove) 
+        {
+            HandleRotate(inputData.movementInput);
+            HandleJump(inputData.isJumpPressed);
+            HandleDetec();
+            HandleRideHeight();
+            HandleUpringForce();
+            HandleSlide(inputData.movementInput);
+            HandleMove();
+            HandleGravity(inputData.isJumpPressed);
+        }
+
+        HandleUpdateProcessData(inputData.tick);
+        return processData;
+    }
+
+    public MovementProcessData SimulateMovementProcess(MovementInputData inputData)
+    {
+        if (NetworkManager.Singleton.IsHost)
+        {
+            HandleUpdateProcessData(inputData.tick);
+            return processData;
+        }
+
+        Physics.simulationMode = SimulationMode.Script;
+
+        processData = MovementProcess(inputData);
+        Physics.Simulate(deltaTime);
+
+        Physics.simulationMode = SimulationMode.FixedUpdate;
+
+        return processData;
+    }
+
+    public void ReconcileProcess(MovementProcessData rewindProcess)
+    {
+        rb.position = rewindProcess.position;
+        rb.velocity = rewindProcess.velocity;
+        rb.rotation = rewindProcess.rotation;
 
         HandleDetec();
     }
 
-    private void OnValueChanged_IsGrounded(bool priviouse, bool current)
+    public MovementProcessData InterpolateClient(MovementProcessData process)
     {
-        if (current)
-        {
-            landedTime = Time.time;
-            IsJumpAnimation.Value = false;
-            isJumpCut = false;
-            rideHeightEnable = true;
-            isFalling = false;
-        }
+        float smoothTime = 1.0f / (baseInterpolateSpeed + process.velocity.magnitude);
+        Vector3 newPosition = Vector3.Lerp(rb.position, process.position, deltaTime / smoothTime);
 
-        if (!current)
+        Quaternion newRotation = Quaternion.Slerp(
+            rb.rotation,
+            process.rotation,
+            Mathf.Clamp01(deltaTime / rotationSmoothTime)
+        );
+
+        rb.MovePosition(newPosition);
+        rb.MoveRotation(newRotation);
+
+        return new MovementProcessData 
         {
-            lastGroundedTime = Time.time;
-        }
+            position = newPosition,
+            velocity = rb.velocity,
+            rotation = newRotation,
+            tick = process.tick
+        };
     }
 
-    public void MovementUpdate(MovementInputData inputData)
+    public MovementProcessData ExtrapolateClient(MovementProcessData process)
     {
-        if (!isCanMove) { return; }
+        Vector3 displacement = process.velocity * deltaTime;
+        if (displacement.magnitude > maxExtrapolateDistance)
+        {
+            displacement = displacement.normalized * maxExtrapolateDistance;
+        }
+        Vector3 extrapolatedPos = process.position + displacement;
 
-        HandleRotate(inputData.movementInput);
-        HandleJump(inputData.isJumpPressed);
-        HandleDetec();
-        HandleRideHeight();
-        HandleUpringForce();
-        HandleSlide(inputData.movementInput);
-        HandleMove();
-        HandleGravity(inputData.isJumpPressed);
+        float smoothTime = 1.0f / (baseInterpolateSpeed + 1 + process.velocity.magnitude);
+        Vector3 newPosition = Vector3.Lerp(rb.position, extrapolatedPos, deltaTime / smoothTime);
+
+        Quaternion newRotation = Quaternion.Slerp(
+            rb.rotation,
+            process.rotation,
+            Mathf.Clamp01(deltaTime / rotationSmoothTime)
+        );
+
+        rb.MovePosition(newPosition);
+        rb.MoveRotation(newRotation);
+
+        return new MovementProcessData
+        {
+            position = newPosition,
+            velocity = process.velocity,
+            rotation = newRotation,
+            tick = process.tick
+        };
+    }
+
+    private void HandleUpdateProcessData(int tick)
+    {
+        processData.tick = tick;
+        processData.position = rb.position;
+        processData.velocity = rb.velocity;
+        processData.rotation = rb.rotation;
     }
 
     private void HandleGravity(bool isJumpPressed)
@@ -377,9 +467,10 @@ public class MovementProcess : MonoBehaviour
             floorAngle = 0.0f;
         }
 
-        if (!isGrounded.Value && !isJumping && !isFalling && Time.time - lastGroundedTime > maxFallTime)
+        if (!isGrounded.Value && rb.velocity.y < 0.0f && !isFalling && Time.time - lastGroundedTime > maxFallTime)
         {
             isFalling = true;
+
             OnFalling?.Invoke(rb.velocity);
         }
     }
@@ -481,6 +572,53 @@ public class MovementProcess : MonoBehaviour
 
         initialJumpGravity[2] = (-2 * (baseJumpHieght + combatJumpHeightCoef * 2)) / Mathf.Pow((timeToApex * 1.5f), 2);
         initialJumpVelocity[2] = (2 * (baseJumpHieght + combatJumpHeightCoef * 2)) / (timeToApex * 1.5f);
+    }
+
+    public void OnRagdolEnable()
+    {
+        isCanMove = false;
+        capsule.enabled = false;
+
+        lastSlideVelocity = Vector3.zero;
+        lastGoalVelocity = Vector3.zero;
+        groundVelocity = Vector3.zero;
+
+        if (IsOwner) 
+        {
+            rb.velocity = Vector3.zero;
+            rb.isKinematic = true; 
+        }
+    }
+
+    public void OnRagdolDisable()
+    {
+        isCanMove = true;
+        capsule.enabled = true;
+
+        if (IsOwner) 
+        { 
+            rb.isKinematic = false;
+            rb.velocity = Vector3.zero;
+
+            HandleDetec();
+        }
+    }
+
+    private void OnValueChanged_IsGrounded(bool priviouse, bool current)
+    {
+        if (current)
+        {
+            landedTime = Time.time;
+            IsJumpAnimation.Value = false;
+            isJumpCut = false;
+            rideHeightEnable = true;
+            isFalling = false;
+        }
+
+        if (!current)
+        {
+            lastGroundedTime = Time.time;
+        }
     }
 
     ///*DEBUG*/

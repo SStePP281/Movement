@@ -1,57 +1,57 @@
+using Unity.Netcode;
 using UnityEngine;
 
-public class CharacterController : MonoBehaviour
+public class CharacterController : NetworkBehaviour
 {
     [SerializeField] private MovementController movementController;
     [SerializeField] private AnimationController animationController;
     [SerializeField] private FootIKController footIKController;
-    [SerializeField] private RagdollController ragdollHandler;
+    [SerializeField] private RagdollController ragdolController;
 
-    private void Start()
+    public override void OnNetworkSpawn()
     {
-        movementController.Initialize();
-        //movementController.Initialize(Time.fixedDeltaTime);
-        //animationController.Initialize(transform, movementController.IsJumpAnimation, movementController.CombatJumpCount);
+        base.OnNetworkSpawn();
 
-        //movementController.OnFalling += (Vector3 vel) => { ActiveRagdol(true, vel); };
-        ragdollHandler.OnStill += StandUp;
-    }
+        animationController.Initialize(transform);
 
-    private void Update()
-    {
-        if (Input.GetKeyDown(KeyCode.Z))
+        animationController.animationEndedCallback += OnStandUpEnded;
+        ragdolController.OnRagdolEnable += OnRagdolEnable;
+
+        if (IsOwner)
         {
-            ActiveRagdol();
-        }
+            movementController.Initialize(animationController, ragdolController);
 
-        if (Input.GetKeyUp(KeyCode.X))
-        {
-            StandUp();
+            animationController.animationEndedCallback += animationController.UpdateParams;
+            ragdolController.OnStill += OnStill;
         }
     }
 
-    private void FixedUpdate()
-    {
-        //movementController.MovementUpdate(inputController.InputData);
-        //animationController.Run(movementController.MoveVelocity);
-    }
-
-    private void ActiveRagdol(bool isCanStand = false, Vector3 startVelocity = default)
+    private void OnRagdolEnable()
     {
         animationController.Disable();
         footIKController.Disable();
-        //movementController.OnRagdolEnable();
-        ragdollHandler.Enable(isCanStand, startVelocity);
+        movementController.OnRagdolEnable();
     }
 
-    private void StandUp()
+    private void OnStill()
     {
-        ragdollHandler.Disable();
-        animationController.PlayStandingUp(animationController.Enable, () => { /*movementController.OnRagdolDisable()*/; animationController.UpdateParams(); footIKController.Enable(); });
+        ragdolController.Disable();
+        animationController.PlayStandingUp();
     }
 
-    private void OnDestroy()
+    private void OnStandUpEnded()
     {
-        animationController.Dispose();
+        footIKController.Enable();
+        movementController.OnRagdolDisable();
+    }
+
+    public override void OnDestroy()
+    {
+        base.OnDestroy();
+
+        if (IsOwner)
+        {
+            animationController.Dispose();
+        }
     }
 }

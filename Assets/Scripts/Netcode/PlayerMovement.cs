@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using Unity.Multiplayer.Samples.Utilities.ClientAuthority;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -17,7 +16,7 @@ public class PlayerMovement : NetworkBehaviour
     private int currentTick = 0;
     private float timeBettwenTick;
 
-    private ClientNetworkTransform clientNetworkTransform;
+    //private ClientNetworkTransform clientNetworkTransform;
     private PlayerProcess guestLastProcess;
     [SerializeField] private float maxExtrapolateTime = 1.0f;
     private float currentExtrapolateTime = 0.0f;
@@ -34,7 +33,7 @@ public class PlayerMovement : NetworkBehaviour
     {
         movementProcess = GetComponent<PlayerMovementProcess>();
         movementInput = GetComponent<PlayerTakeMovementInput>();
-        clientNetworkTransform = GetComponent<ClientNetworkTransform>();
+        //clientNetworkTransform = GetComponent<ClientNetworkTransform>();
 
         clientInputBuffer = new CircualBuffer<PlayerInput>(MOVEMENT_BUFFER_SIZE);
         clientProcessBuffer = new CircualBuffer<PlayerProcess>(MOVEMENT_BUFFER_SIZE);
@@ -54,9 +53,9 @@ public class PlayerMovement : NetworkBehaviour
 
         if (!IsOwner && !IsServer)
         {
-            clientNetworkTransform.SyncPositionX = false;
-            clientNetworkTransform.SyncPositionY = false;
-            clientNetworkTransform.SyncPositionZ = false;
+            //clientNetworkTransform.SyncPositionX = false;
+            //clientNetworkTransform.SyncPositionY = false;
+            //clientNetworkTransform.SyncPositionZ = false;
         }
     }
 

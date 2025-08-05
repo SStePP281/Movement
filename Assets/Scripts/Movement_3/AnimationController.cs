@@ -1,8 +1,9 @@
 using System;
 using System.Linq;
+using Unity.Netcode;
 using UnityEngine;
 
-public class AnimationController : MonoBehaviour, IDisposable
+public class AnimationController : NetworkBehaviour, IDisposable
 {
     private const string VELOCITY_FLOAT_NAME = "Velocity";
     private const string JUMPING_BOOL_NAME = "Jumping";
@@ -10,7 +11,6 @@ public class AnimationController : MonoBehaviour, IDisposable
     private const string BACK_STAND_UP_NAME = "BackStandUp";
     private const string FRONT_STAND_UP_NAME = "FrontStandUp";
 
-    /*Take params*/
     private Animator animator;
 
     /*Base Anim params*/
@@ -27,7 +27,10 @@ public class AnimationController : MonoBehaviour, IDisposable
     private Transform hipsBone;
     private RigAdjusterForAnimation rigAdjustForBackStandUp;
     private RigAdjusterForAnimation rigAdjustForFrontStandUp;
-    private Action standingUpEndCallback;
+
+    public Action animationEndedCallback;
+
+    public bool IsStandUp { get; private set; }
 
     private void Awake()
     {
@@ -38,11 +41,9 @@ public class AnimationController : MonoBehaviour, IDisposable
         jumpingCombatNameHash = Animator.StringToHash(JUMPING_COMBAT_INT_NAME);
     }
 
-    public void Initialize(Transform _parent, ReactiveVariable<bool> _isJumping, ReactiveVariable<int> _jumpCombatCount)
+    public void Initialize(Transform _parent)
     {
         parent = _parent;
-        isJumping = _isJumping;
-        jumpCombatCount = _jumpCombatCount;
 
         hipsBone = animator.GetBoneTransform(HumanBodyBones.Hips);
 
@@ -51,6 +52,12 @@ public class AnimationController : MonoBehaviour, IDisposable
 
         rigAdjustForBackStandUp = new RigAdjusterForAnimation(currentClips.First(clip => clip.name == BACK_STAND_UP_NAME), this, bones);
         rigAdjustForFrontStandUp = new RigAdjusterForAnimation(currentClips.First(clip => clip.name == FRONT_STAND_UP_NAME), this, bones);
+    }
+
+    public void SetJumpingVariable(ReactiveVariable<bool> _isJumping, ReactiveVariable<int> _jumpCombatCount)
+    {
+        isJumping = _isJumping;
+        jumpCombatCount = _jumpCombatCount;
 
         isJumping.OnValueChanged += Jump;
         jumpCombatCount.OnValueChanged += JumpCombat;
@@ -71,24 +78,21 @@ public class AnimationController : MonoBehaviour, IDisposable
         animator.SetInteger(jumpingCombatNameHash, current);
     }
 
-    public void PlayStandingUp(Action adjustAnimationEnded = null, Action animationEndedCallback = null)
+    public void PlayStandingUp()
     {
-        AdjustParentRotationToHipsBone();
-        AdjustParentPositionToHipsBone();
+        bool isFront = IsFrontUp;
+        IsStandUp = true;
 
-        standingUpEndCallback = animationEndedCallback;
+        StandUp(isFront);
 
-        if (IsFrontUp)
-        {
-            rigAdjustForFrontStandUp.Adjust(() => CallbackForAdjustStand(FRONT_STAND_UP_NAME, adjustAnimationEnded));
-        }
-        else
-        {
-            rigAdjustForBackStandUp.Adjust(() => CallbackForAdjustStand(BACK_STAND_UP_NAME, adjustAnimationEnded));
-        }
+        SendStandUpServerRpc(isFront);
     }
 
-    public void OnStandUpAnimationEnded() => standingUpEndCallback?.Invoke();
+    public void OnStandUpAnimationEnded()
+    {
+        IsStandUp = false;
+        animationEndedCallback?.Invoke();
+    }
 
     private void CallbackForAdjustStand(string clipName, Action callback)
     {
@@ -150,5 +154,39 @@ public class AnimationController : MonoBehaviour, IDisposable
     {
         isJumping.OnValueChanged -= Jump;
         jumpCombatCount.OnValueChanged -= JumpCombat;
+    }
+
+    [ServerRpc]
+    private void SendStandUpServerRpc(bool isFront)
+    {
+        if (!IsHost)
+        {
+            StandUp(isFront);
+        }
+
+        SendStandUpClientRpc(isFront);
+    }
+
+    [ClientRpc]
+    private void SendStandUpClientRpc(bool isFront)
+    {
+        if (IsOwner) { return; }
+
+        StandUp(isFront);
+    }
+
+    private void StandUp(bool isFront)
+    {
+        AdjustParentRotationToHipsBone();
+        AdjustParentPositionToHipsBone();
+
+        if (isFront)
+        {
+            rigAdjustForFrontStandUp.Adjust(() => CallbackForAdjustStand(FRONT_STAND_UP_NAME, Enable));
+        }
+        else
+        {
+            rigAdjustForBackStandUp.Adjust(() => CallbackForAdjustStand(BACK_STAND_UP_NAME, Enable));
+        }
     }
 }
