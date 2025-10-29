@@ -1,9 +1,9 @@
-﻿public class CircualBuffer<T>
+﻿public class CircularBuffer<T>
 {
     T[] buffer;
     int bufferSize;
 
-    public CircualBuffer(int bufferSize)
+    public CircularBuffer(int bufferSize)
     {
         this.bufferSize = bufferSize;
         buffer = new T[bufferSize];

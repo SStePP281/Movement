@@ -1,5 +1,4 @@
-﻿using System.Collections.Generic;
-using Unity.Multiplayer.Samples.Utilities.ClientAuthority;
+﻿using Unity.Multiplayer.Samples.Utilities.ClientAuthority;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -7,26 +6,28 @@ public class MovementController : NetworkBehaviour
 {
     private const int MOVEMENT_BUFFER_SIZE = 1024;
 
-    [SerializeField] private MovementProcessController movementProcess;
+    [SerializeField] private MovementStateController movementProcess;
     [SerializeField] private float reconciliationThreshold = 2.0f;
     [SerializeField] private float maxExtrapolateTime = 1.0f;
 
     /*Client params*/
-    private CircualBuffer<MovementInputData> clientInputBuffer;
-    private CircualBuffer<MovementProcessData> clientProcessBuffer;
-    private MovementProcessData lastServerProcess;
-    private MovementProcessData lastPredictionProcess;
+    private CircularBuffer<MovementInputData> clientInputBuffer;
+    private CircularBuffer<MovementStateData> clientProcessBuffer;
+    private MovementStateData lastServerProcess;
+    private MovementStateData lastPredictionProcess;
     private int currentTick = 0;
     private float timeBettwenTick;
 
     private ClientNetworkTransform clientNetworkTransform;
-    private MovementProcessData guestLastProcess;
+    private MovementStateData guestLastProcess;
     private float currentExtrapolateTime = 0.0f;
     private float lastServerTime = 0.0f;
 
     /*Server params*/
-    private CircualBuffer<MovementProcessData> serverProcessBuffer;
-    private Queue<MovementInputData> serverInputQueue;
+    private CircularBuffer<MovementStateData> serverProcessBuffer;
+    private MovementInputData[] serverInputBuffer;
+    private int lastProcessedServerTick = -1;
+    private MovementInputData lastReceivedInput;
 
     /*Input params*/
     private RagdollController ragdollController;
@@ -37,10 +38,10 @@ public class MovementController : NetworkBehaviour
     {
         clientNetworkTransform = GetComponent<ClientNetworkTransform>();
 
-        clientInputBuffer = new CircualBuffer<MovementInputData>(MOVEMENT_BUFFER_SIZE);
-        clientProcessBuffer = new CircualBuffer<MovementProcessData>(MOVEMENT_BUFFER_SIZE);
-        serverProcessBuffer = new CircualBuffer<MovementProcessData>(MOVEMENT_BUFFER_SIZE);
-        serverInputQueue = new Queue<MovementInputData>();
+        clientInputBuffer = new CircularBuffer<MovementInputData>(MOVEMENT_BUFFER_SIZE);
+        clientProcessBuffer = new CircularBuffer<MovementStateData>(MOVEMENT_BUFFER_SIZE);
+        serverProcessBuffer = new CircularBuffer<MovementStateData>(MOVEMENT_BUFFER_SIZE);
+        serverInputBuffer = new MovementInputData[MOVEMENT_BUFFER_SIZE];
 
         timeBettwenTick = 1.0f / NetworkManager.NetworkTickSystem.TickRate;
         movementProcess.Initialize(timeBettwenTick);
@@ -92,22 +93,25 @@ public class MovementController : NetworkBehaviour
     {
         if (IsOwner) { return; }
 
-        if (lastServerProcess.position == guestLastProcess.position || lastServerProcess.Equals(default)) { return; }
+        if (lastServerProcess.position == guestLastProcess.position) { return; }
+
+        Debug.Log("LLL");
 
         float ping = (NetworkManager.LocalTime.TimeAsFloat - lastServerTime) * 1000;
-
         if (ping >= 200f && currentExtrapolateTime < maxExtrapolateTime)
         {
             currentExtrapolateTime += timeBettwenTick;
 
-            guestLastProcess = movementProcess.ExtrapolateClient(lastServerProcess);
+            movementProcess.ApplyPredictedState(lastServerProcess);
         }
         else
         {
             currentExtrapolateTime = 0.0f;
 
-            guestLastProcess = movementProcess.InterpolateClient(lastServerProcess);
+            movementProcess.ApplyPredictedState(lastServerProcess);
         }
+
+        guestLastProcess = lastServerProcess;
     }
 
     private void HandleClientTick()
@@ -121,8 +125,9 @@ public class MovementController : NetworkBehaviour
 
         SendClientInputToServerRpc(input);
 
-        MovementProcessData process = movementProcess.MovementProcess(input);
+        MovementStateData process = movementProcess.MovementProcess(input);
         clientProcessBuffer.Add(process, bufferIndex);
+        lastPredictionProcess = process;
 
         HandleServerReconciliation();
 
@@ -132,21 +137,26 @@ public class MovementController : NetworkBehaviour
     [ServerRpc]
     private void SendClientInputToServerRpc(MovementInputData input)
     {
-        serverInputQueue.Enqueue(input);
+        int index = input.tick % MOVEMENT_BUFFER_SIZE;
+        serverInputBuffer[index] = input;
+        lastReceivedInput = input;
     }
 
     private void HandleServerReconciliation()
     {
         if (!ShouldReconcile()) { return; }
 
-        int bufferIndex = lastServerProcess.tick % MOVEMENT_BUFFER_SIZE;
+        int serverTick = lastServerProcess.tick;
+        int bufferIndex = serverTick % MOVEMENT_BUFFER_SIZE;
 
-        if (bufferIndex - 1 < 0) { return; }
-
-        MovementProcessData rewindProcess = IsHost ? serverProcessBuffer.Get(bufferIndex - 1) : lastServerProcess;
-        MovementProcessData clientProcess = IsHost ? clientProcessBuffer.Get(bufferIndex) : clientProcessBuffer.Get(bufferIndex);
+        MovementStateData rewindProcess = IsHost
+            ? serverProcessBuffer.Get(bufferIndex)
+            : lastServerProcess;
+        MovementStateData clientProcess = IsHost ? clientProcessBuffer.Get(bufferIndex) : clientProcessBuffer.Get(bufferIndex);
 
         float positionError = Vector3.Distance(rewindProcess.position, clientProcess.position);
+
+        Debug.Log(positionError - reconciliationThreshold);
 
         if (positionError > reconciliationThreshold)
         {
@@ -165,7 +175,7 @@ public class MovementController : NetworkBehaviour
         return isNewServerProcess && isLastProcessUndefinedOrDifferent && !ragdollController.IsActive && !animationController.IsStandUp;
     }
 
-    private void ReconcileProcess(MovementProcessData rewindProcess)
+    private void ReconcileProcess(MovementStateData rewindProcess)
     {
         movementProcess.ReconcileProcess(rewindProcess);
 
@@ -175,7 +185,7 @@ public class MovementController : NetworkBehaviour
 
         int tickToReplay = lastServerProcess.tick;
         MovementInputData input = default;
-        MovementProcessData process = default;
+        MovementStateData process = default;
 
         while (tickToReplay < currentTick)
         {
@@ -193,29 +203,39 @@ public class MovementController : NetworkBehaviour
 
     private void HandleServerTick()
     {
-        if (!IsServer) { return; }
+        if (!IsServer || lastReceivedInput.tick == 0) return;
 
-        int bufferIndex = -1;
-        MovementInputData playerInput = default;
-        MovementProcessData process = default;
+        if (lastProcessedServerTick == -1)
+            lastProcessedServerTick = lastReceivedInput.tick - 1;
 
-        while (serverInputQueue.Count > 0)
+        int maxTickToProcess = Mathf.Min(currentTick, lastReceivedInput.tick);
+
+        for (int tick = lastProcessedServerTick + 1; tick <= maxTickToProcess; tick++)
         {
-            playerInput = serverInputQueue.Dequeue();
+            int index = tick % MOVEMENT_BUFFER_SIZE;
+            MovementInputData input;
 
-            bufferIndex = playerInput.tick % MOVEMENT_BUFFER_SIZE;
+            if (serverInputBuffer[index].tick == tick)
+                input = serverInputBuffer[index];
+            else
+                input = lastReceivedInput;
 
-            process = movementProcess.SimulateMovementProcess(playerInput);
-            serverProcessBuffer.Add(process, bufferIndex);
+            input.tick = tick;
+
+            //MovementStateData process = movementProcess.SimulateMovementProcess(input);
+            //serverProcessBuffer.Add(process, index);
+            lastProcessedServerTick = tick;
         }
 
-        if (bufferIndex == -1) { return; }
-
-        SendLastServerProcessToClientRpc(serverProcessBuffer.Get(bufferIndex), NetworkManager.ServerTime.TimeAsFloat);
+        if (lastProcessedServerTick >= 0)
+        {
+            int lastIndex = lastProcessedServerTick % MOVEMENT_BUFFER_SIZE;
+            SendLastServerProcessToClientRpc(serverProcessBuffer.Get(lastIndex), NetworkManager.ServerTime.TimeAsFloat);
+        }
     }
 
     [ClientRpc]
-    private void SendLastServerProcessToClientRpc(MovementProcessData process, float serverTime)
+    private void SendLastServerProcessToClientRpc(MovementStateData process, float serverTime)
     {
         lastServerProcess = process;
         lastServerTime = serverTime;

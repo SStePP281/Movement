@@ -588,7 +588,7 @@ GameObject:
   - component: {fileID: 7431831192027553609}
   - component: {fileID: 3472848026203999618}
   m_Layer: 0
-  m_Name: Player
+  m_Name: Player_3
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -674,7 +674,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 748203036
+  GlobalObjectIdHash: 2655278464
   InScenePlacedSourceGlobalObjectIdHash: 0
   AlwaysReplicateAsRoot: 0
   SynchronizeTransform: 1
@@ -712,7 +712,7 @@ MonoBehaviour:
   UseQuaternionCompression: 0
   UseHalfFloatPrecision: 0
   InLocalSpace: 0
-  Interpolate: 1
+  Interpolate: 0
   SlerpPosition: 0
 --- !u!114 &-6905795449558338253
 MonoBehaviour:
@@ -766,11 +766,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 2762231278110496299}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f919968719884b848a998337fa2921f8, type: 3}
+  m_Script: {fileID: 11500000, guid: c07dd96cf4985be4ca40b70dbb4894f3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   groundCheckDistance: 0.1
-  groundCheckRadiuse: 0.15
+  groundCheckRadiuse: 0.5
   rotateSpeed: 15
   maxMoveSpeed: 5
   moveAcceleration: 10
@@ -847,7 +847,7 @@ MonoBehaviour:
   slopeSpeedMultiplier: 2
   slideAcceleration: 5
   maxSlideSpeed: 15
-  slideRotationSpeed: 2
+  slideRotationSpeed: 5
   slideFactorControl: 0.3
   baseJumpHieght: 1
   maxJumpingTime: 1

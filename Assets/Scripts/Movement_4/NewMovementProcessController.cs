@@ -2,23 +2,7 @@ using System;
 using Unity.Netcode;
 using UnityEngine;
 
-public struct MovementProcessData : INetworkSerializable
-{
-    public Vector3 position;
-    public Vector3 velocity;
-    public Quaternion rotation;
-    public int tick;
-
-    public void NetworkSerialize<T>(BufferSerializer<T> serializer) where T : IReaderWriter
-    {
-        serializer.SerializeValue(ref position);
-        serializer.SerializeValue(ref velocity);
-        serializer.SerializeValue(ref rotation);
-        serializer.SerializeValue(ref tick);
-    }
-}
-
-public class MovementProcessController : NetworkBehaviour
+public class NewMovementProcessController : NetworkBehaviour
 {
     private const int COMBAT_COUNT_MAX = 3;
 
@@ -70,10 +54,8 @@ public class MovementProcessController : NetworkBehaviour
     [Header("Ragdol")]
     [SerializeField] private float maxFallTime = 2.0f;
 
-    [Header("Net Interpolation")]
-    [SerializeField] private float baseInterpolateSpeed = 10.0f;
+    [Header("Extrapolate")]
     [SerializeField] private float maxExtrapolateDistance = 2.0f;
-    [SerializeField] private float rotationSmoothTime = 0.1f;
 
     /*Floor params*/
     private bool isFloorRayHit;
@@ -125,7 +107,7 @@ public class MovementProcessController : NetworkBehaviour
     public Action<Vector3> OnFalling;
 
     /*Netcode params*/
-    private MovementProcessData processData;
+    private MovementStateData processData;
 
     private void Awake()
     {
@@ -138,7 +120,7 @@ public class MovementProcessController : NetworkBehaviour
         CombatJumpCount = new ReactiveVariable<int>(0);
         IsJumpAnimation = new ReactiveVariable<bool>(false);
 
-        processData = new MovementProcessData();
+        processData = new MovementStateData();
 
         isCanMove = true;
         targetUprightRotation = transform.rotation;
@@ -155,7 +137,7 @@ public class MovementProcessController : NetworkBehaviour
         this.deltaTime = deltaTime;
     }
 
-    public MovementProcessData MovementProcess(MovementInputData inputData)
+    public MovementStateData MovementProcess(MovementInputData inputData)
     {
         if (isCanMove) 
         {
@@ -173,84 +155,50 @@ public class MovementProcessController : NetworkBehaviour
         return processData;
     }
 
-    public MovementProcessData SimulateMovementProcess(MovementInputData inputData)
+    public MovementStateData SimulateMovementProcess(MovementInputData inputData)
     {
         if (NetworkManager.Singleton.IsHost)
         {
-            HandleUpdateProcessData(inputData.tick);
-            return processData;
+            return MovementProcess(inputData);
         }
 
         Physics.simulationMode = SimulationMode.Script;
 
-        processData = MovementProcess(inputData);
+        MovementStateData result = MovementProcess(inputData);
         Physics.Simulate(deltaTime);
 
         Physics.simulationMode = SimulationMode.FixedUpdate;
 
-        return processData;
+        return result;
     }
 
-    public void ReconcileProcess(MovementProcessData rewindProcess)
+    public void ReconcileProcess(MovementStateData rewindProcess)
     {
         rb.position = rewindProcess.position;
-        rb.velocity = rewindProcess.velocity;
         rb.rotation = rewindProcess.rotation;
+        rb.velocity = rewindProcess.velocity;
 
         HandleDetec();
     }
 
-    public MovementProcessData InterpolateClient(MovementProcessData process)
+    public void ApplyServerState(MovementStateData serverState)
     {
-        float smoothTime = 1.0f / (baseInterpolateSpeed + process.velocity.magnitude);
-        Vector3 newPosition = Vector3.Lerp(rb.position, process.position, deltaTime / smoothTime);
-
-        Quaternion newRotation = Quaternion.Slerp(
-            rb.rotation,
-            process.rotation,
-            Mathf.Clamp01(deltaTime / rotationSmoothTime)
-        );
-
-        rb.MovePosition(newPosition);
-        rb.MoveRotation(newRotation);
-
-        return new MovementProcessData 
-        {
-            position = newPosition,
-            velocity = rb.velocity,
-            rotation = newRotation,
-            tick = process.tick
-        };
+        rb.position = serverState.position;
+        rb.rotation = serverState.rotation;
+        rb.velocity = serverState.velocity;
     }
 
-    public MovementProcessData ExtrapolateClient(MovementProcessData process)
+    public void ApplyPredictedState(MovementStateData serverState)
     {
-        Vector3 displacement = process.velocity * deltaTime;
+        Vector3 displacement = serverState.velocity * deltaTime;
         if (displacement.magnitude > maxExtrapolateDistance)
         {
             displacement = displacement.normalized * maxExtrapolateDistance;
         }
-        Vector3 extrapolatedPos = process.position + displacement;
 
-        float smoothTime = 1.0f / (baseInterpolateSpeed + 1 + process.velocity.magnitude);
-        Vector3 newPosition = Vector3.Lerp(rb.position, extrapolatedPos, deltaTime / smoothTime);
-
-        Quaternion newRotation = Quaternion.Slerp(
-            rb.rotation,
-            process.rotation,
-            Mathf.Clamp01(deltaTime / rotationSmoothTime)
-        );
-
-        rb.MovePosition(newPosition);
-        rb.MoveRotation(newRotation);
-
-        return new MovementProcessData
-        {
-            position = newPosition,
-            velocity = process.velocity,
-            rotation = newRotation,
-            tick = process.tick
-        };
+        rb.position = serverState.position + displacement;
+        rb.rotation = serverState.rotation;
+        rb.velocity = serverState.velocity;
     }
 
     private void HandleUpdateProcessData(int tick)

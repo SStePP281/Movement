@@ -9,8 +9,8 @@ public class PlayerMovement : NetworkBehaviour
     [SerializeField] private float reconciliationThreshold = 2.0f;
 
     //Client Data
-    private CircualBuffer<PlayerInput> clientInputBuffer;
-    private CircualBuffer<PlayerProcess> clientProcessBuffer;
+    private CircularBuffer<PlayerInput> clientInputBuffer;
+    private CircularBuffer<PlayerProcess> clientProcessBuffer;
     private PlayerProcess lastServerProcess;
     private PlayerProcess lastPredictionProcess;
     private int currentTick = 0;
@@ -23,7 +23,7 @@ public class PlayerMovement : NetworkBehaviour
     private float lastServerTime = 0.0f;
 
     //Server Data
-    private CircualBuffer<PlayerProcess> serverProcessBuffer;
+    private CircularBuffer<PlayerProcess> serverProcessBuffer;
     private Queue<PlayerInput> serverInputQueue;
 
     private PlayerTakeMovementInput movementInput;
@@ -35,9 +35,9 @@ public class PlayerMovement : NetworkBehaviour
         movementInput = GetComponent<PlayerTakeMovementInput>();
         //clientNetworkTransform = GetComponent<ClientNetworkTransform>();
 
-        clientInputBuffer = new CircualBuffer<PlayerInput>(MOVEMENT_BUFFER_SIZE);
-        clientProcessBuffer = new CircualBuffer<PlayerProcess>(MOVEMENT_BUFFER_SIZE);
-        serverProcessBuffer = new CircualBuffer<PlayerProcess>(MOVEMENT_BUFFER_SIZE);
+        clientInputBuffer = new CircularBuffer<PlayerInput>(MOVEMENT_BUFFER_SIZE);
+        clientProcessBuffer = new CircularBuffer<PlayerProcess>(MOVEMENT_BUFFER_SIZE);
+        serverProcessBuffer = new CircularBuffer<PlayerProcess>(MOVEMENT_BUFFER_SIZE);
         serverInputQueue = new Queue<PlayerInput>();
     }
 
